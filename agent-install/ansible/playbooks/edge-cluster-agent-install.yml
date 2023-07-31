@@ -1,0 +1,194 @@
+---
+- name: Install IEAM agent on OpenShift Edge cluster
+  vars:
+    HZN_EXCHANGE_USER_AUTH: ""
+    HZN_ORG_ID: ""
+    HZN_FSS_CSSURL: ""
+    AGENT_NAMESPACE: ""
+    EDGE_CLUSTER_STORAGE_CLASS: ""
+    K8S_AUTH_HOST: ""
+    K8S_AUTH_USERNAME: ""
+    K8S_AUTH_PASSWORD: ""
+    K8S_AUTH_TOKEN: ""
+    OCP_USER: ""
+    HZN_AGENT_PORT: ""
+    HZN_EXCHANGE_URL: ""
+    HZN_NODE_ID: ""
+  hosts: localhost
+  tasks:
+    - name: Log into cluster using token
+      ansible.builtin.shell: oc login --token="{{ K8S_AUTH_TOKEN }}" --server="{{ K8S_AUTH_HOST }}"
+      no_log: true
+      when: K8S_AUTH_TOKEN != ""
+    - name: Log into cluster using username
+      ansible.builtin.shell: oc login "{{ K8S_AUTH_HOST }}" -u "{{ K8S_AUTH_USERNAME }}" -p "{{ K8S_AUTH_PASSWORD }}" --insecure-skip-tls-verify=true
+      no_log: true
+      when: K8S_AUTH_USERNAME != "" and K8S_AUTH_PASSWORD != ""
+    - name: Expose image registry default route
+      kubernetes.core.k8s:
+        state: patched
+        api_version: imageregistry.operator.openshift.io/v1
+        kind: Config
+        name: cluster
+        namespace: openshift-image-registry
+        resource_definition:
+          spec:
+            defaultRoute: true
+    - name: Get existing image registry route
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: default-route
+        namespace: openshift-image-registry
+      register: image_registry_route
+    - name: Extract OCP image registry host
+      ansible.builtin.set_fact:
+        OCP_IMAGE_REGISTRY: "{{ image_registry_route | json_query('resources[*].spec.host') | first }}"
+    - name: Create a new agent namespace
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: Namespace
+        name: "{{ AGENT_NAMESPACE }}"
+    - name: Create a service account
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: ServiceAccount
+        name: "{{ OCP_USER }}"
+        namespace: "{{ AGENT_NAMESPACE }}"
+    - name: Add Edit role to service account
+      kubernetes.core.k8s:
+        state: present
+        api_version: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: edit
+        namespace: "{{ AGENT_NAMESPACE }}"
+        resource_definition:
+          subjects:
+            - kind: ServiceAccount
+              name: "{{ OCP_USER }}"
+              namespace: "{{ AGENT_NAMESPACE }}"
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: edit
+    - name: Get ServiceAccount
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ServiceAccount
+        name: "{{ OCP_USER }}"
+        namespace: "{{ AGENT_NAMESPACE }}"
+      register: service_account
+    - name: Extract ServiceAccount secret names
+      ansible.builtin.set_fact:
+        sa_secret_names_list: "{{ service_account | json_query('resources[*].secrets') | first }}"
+    - name: Search for all secrets with service-account-token type
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        namespace: "{{ AGENT_NAMESPACE }}"
+        field_selectors:
+          - type=kubernetes.io/service-account-token
+      register: sa_tokens_list
+    - name: Extract desired ServiceAccount token
+      ansible.builtin.set_fact:
+        OCP_TOKEN: "{{ item.data.token | b64decode }}"
+      loop: "{{ sa_tokens_list | json_query('resources') }}"
+      until: item.metadata.name in sa_secret_names_list
+      retries: 0
+      no_log: true
+    - name: Get image registry TLS cert
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: image-registry-tls
+        namespace: openshift-image-registry
+      register: image_registry_tls
+    - name: Extract TLS cert
+      ansible.builtin.set_fact:
+        ocp_tls_crt: "{{ image_registry_tls | json_query(query) | b64decode }}"
+      vars:
+        query: 'resources[*].data."tls.crt"'
+    - name: Set TLS cert directory path
+      ansible.builtin.set_fact:
+        image_registry_tls_directory_path: "/etc/docker/certs.d/{{ OCP_IMAGE_REGISTRY }}"
+    - name: Set TLS cert file path
+      ansible.builtin.set_fact:
+        image_registry_tls_cert_path: "{{ image_registry_tls_directory_path }}/ca.crt"
+    - name: Create a TLS directory
+      ansible.builtin.file:
+        path: "{{ image_registry_tls_directory_path }}"
+        state: directory
+        mode: "0755"
+      become: true
+    - name: Save TLS cert
+      ansible.builtin.copy:
+        dest: "{{ image_registry_tls_cert_path }}"
+        content: "{{ ocp_tls_crt }}"
+        mode: "0755"
+      become: true
+    - name: Login to registry
+      ansible.builtin.shell: echo {{ OCP_TOKEN }} | docker login -u {{ OCP_USER }} --password-stdin {{ OCP_IMAGE_REGISTRY }}
+    - name: Generate ConfigMap data
+      ansible.builtin.set_fact:
+        configmap_data: "{{ configmap_data | default({OCP_IMAGE_REGISTRY: lookup('file', image_registry_tls_cert_path)}) }}"
+    - name: Create ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: ConfigMap
+        name: registry-config
+        namespace: openshift-config
+        resource_definition:
+          data: "{{ configmap_data }}"
+    - name: Add TLS cert to trusted CA
+      kubernetes.core.k8s:
+        state: patched
+        api_version: config.openshift.io/v1
+        kind: Image
+        name: cluster
+        namespace: openshift-image-registry
+        resource_definition:
+          spec:
+            additionalTrustedCA:
+              name: registry-config
+    - name: Set temp folder for agent install
+      ansible.builtin.set_fact:
+        agent_install_folder_path: "/tmp/{{ HZN_ORG_ID }}/{{ HZN_NODE_ID }}"
+    - name: Create installation directory
+      ansible.builtin.file:
+        path: "{{ agent_install_folder_path }}"
+        state: directory
+        mode: "0777"
+      become: true
+    - name: Copy Agent install files to agent_install_folder_path
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ agent_install_folder_path }}"
+        mode: "0777"
+      with_items:
+        - { src: "{{ playbook_dir }}/files/agent-install.cfg" }
+        - { src: "{{ playbook_dir }}/files/agent-install.crt" }
+        - { src: "{{ playbook_dir }}/files/agent-install.sh" }
+      become: true
+    - name: Run agent-install script
+      ansible.builtin.script:
+        cmd: "agent-install.sh -D cluster -i 'css:'"
+        chdir: "{{ agent_install_folder_path }}"
+      environment:
+        HZN_EXCHANGE_USER_AUTH: "{{ HZN_EXCHANGE_USER_AUTH }}"
+        HZN_ORG_ID: "{{ HZN_ORG_ID }}"
+        HZN_FSS_CSSURL: "{{ HZN_FSS_CSSURL }}"
+        HZN_EXCHANGE_URL: "{{ HZN_EXCHANGE_URL }}"
+        HZN_NODE_ID: "{{ HZN_NODE_ID }}"
+        EDGE_CLUSTER_REGISTRY_USERNAME: "{{ OCP_USER }}"
+        EDGE_CLUSTER_REGISTRY_TOKEN: "{{ OCP_TOKEN }}"
+        OCP_PROJECT: "{{ AGENT_NAMESPACE }}"
+        AGENT_NAMESPACE: "{{ AGENT_NAMESPACE }}"
+        EDGE_CLUSTER_STORAGE_CLASS: "{{ EDGE_CLUSTER_STORAGE_CLASS }}"
+        IMAGE_ON_EDGE_CLUSTER_REGISTRY: "{{ OCP_IMAGE_REGISTRY }}/{{ AGENT_NAMESPACE }}/amd64_anax_k8s"
+        HZN_MGMT_HUB_CERT_PATH: "{{ agent_install_folder_path }}/agent-install.crt"
+        AGENT_CFG_FILE: "{{ agent_install_folder_path }}/agent-install.cfg"
+        AGENT_DEPLOYMENT_STATUS_TIMEOUT_SECONDS: "200"
+        AGENT_REGISTRATION_TIMEOUT: "200"
