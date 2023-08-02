@@ -2,28 +2,26 @@
 
 - [ieam-edge-assets](#ieam-edge-assets)
   - [Assumptions](#assumptions)
-  - [Pre-Requisites](#pre-requisites)
   - [Install IEAM **Cluster** Agents](#install-ieam-cluster-agents)
-    - [Before You Begin](#before-you-begin)
+    - [Pre-Requisites](#pre-requisites)
     - [Setting up Ansible project](#setting-up-ansible-project)
     - [Running IEAM agent install with Ansible](#running-ieam-agent-install-with-ansible)
+  - [OpenShift Pipelines for CI/CD Demo](#openshift-pipelines-for-cicd-demo)
 
 ## Assumptions
 - These instructions have only been tested on **MacOS**
 
-## Pre-Requisites
+## Install IEAM **Cluster** Agents
+### Pre-Requisites
 1. IBM Edge Application Manager Hub (`v4.5`)
 2. OpenShift Cluster with Storage and [Image Registry is exposed](https://docs.openshift.com/container-platform/4.11/registry/securing-exposing-registry.html)
    * The Edge Cluster environment used for demo is found in [TechZone](https://techzone.ibm.com/collection/production-deployment-guides/environments) using NFS for Storage
-
-## Install IEAM **Cluster** Agents
-### Before You Begin
-1. Ensure [Pre-Requisites](#pre-requisites) are met
-2. Ensure the following tools are installed:
+3. Ensure the following tools are installed:
    1. [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html)
    2. [Docker](https://docs.docker.com/engine/install/)
    3. [Horizon CLI](https://www.ibm.com/docs/en/eam/4.5?topic=cli-installing-hzn)
    4. [jq](https://jqlang.github.io/jq/download/)
+   5. [oc](https://docs.openshift.com/container-platform/4.11/cli_reference/openshift_cli/getting-started-cli.html)
 
 ### Setting up Ansible project
 1. Install the following Ansible collections:
@@ -46,3 +44,6 @@
     * `ansible-playbook agent-install/ansible/playbooks/edge-cluster-agent-install.yml --extra-vars @agent-install/ansible/vars.yml --ask-become-pass`
       * The password to enter is your computer password. This is to allow certain tasks to run with higher privileges.
 * You will see the agent running in namespace set for `AGENT_NAMESPACE` in `vars.yml`
+
+## OpenShift Pipelines for CI/CD Demo
+* Please refer to the following [repository](https://github.com/Client-Engineering-Industry-Squad-1/ieam-edge-cluster-demo) to setup this demo in your environment
