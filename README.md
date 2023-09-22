@@ -47,3 +47,6 @@
 
 ## OpenShift Pipelines for CI/CD Demo
 * Please refer to the following [repository](https://github.com/Client-Engineering-Industry-Squad-1/ieam-edge-cluster-demo) to setup this demo in your environment
+
+## Inspection with MVI on Edge Demo
+* Please refer to the follow [repository](https://github.com/Client-Engineering-Industry-Squad-1/ieam-edge-mvi-demo) to setup the services with IEAM in your environment
