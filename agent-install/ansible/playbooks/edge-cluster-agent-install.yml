@@ -129,7 +129,7 @@
         mode: "0755"
       become: true
     - name: Login to registry
-      ansible.builtin.shell: echo {{ OCP_TOKEN }} | docker login -u {{ OCP_USER }} --password-stdin {{ OCP_IMAGE_REGISTRY }}
+      ansible.builtin.shell: echo {{ OCP_TOKEN }} | podman login -u {{ OCP_USER }} --password-stdin {{ OCP_IMAGE_REGISTRY }}
     - name: Generate ConfigMap data
       ansible.builtin.set_fact:
         configmap_data: "{{ configmap_data | default({OCP_IMAGE_REGISTRY: lookup('file', image_registry_tls_cert_path)}) }}"
