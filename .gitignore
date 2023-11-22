@@ -2,5 +2,5 @@
 **/*secret*
 
 
-agent-install/ansible/playbooks/files/*
+#agent-install/ansible/playbooks/files/*
 !agent-install/ansible/playbooks/files/example-agent-install.cfg
